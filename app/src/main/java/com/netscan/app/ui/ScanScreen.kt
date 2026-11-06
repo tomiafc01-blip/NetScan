@@ -13,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -60,6 +61,18 @@ fun ScanScreen(vm: ScanViewModel) {
         ) {
             NetHeader(state.net?.ssid, state.net?.localIp, state.phase)
 
+            val update by vm.update.collectAsState()
+            val updatePhase by vm.updatePhase.collectAsState()
+            val ctx = LocalContext.current
+            update?.let { rel ->
+                UpdateBanner(
+                    versionName = rel.versionName,
+                    phase = updatePhase,
+                    onUpdate = { vm.runUpdate(ctx) },
+                    onDismiss = { vm.dismissUpdate() }
+                )
+            }
+
             if (state.devices.isEmpty() && !state.running) {
                 EmptyHint()
             } else {
@@ -101,6 +114,50 @@ private fun NetHeader(ssid: String?, ip: String?, phase: String) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary
             )
+        }
+    }
+}
+
+@Composable
+private fun UpdateBanner(
+    versionName: String,
+    phase: String,
+    onUpdate: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 8.dp)
+    ) {
+        Row(
+            Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(Icons.Default.SystemUpdate, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "Actualización disponible · v$versionName",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                if (phase.isNotEmpty()) {
+                    Text(
+                        phase,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+            if (phase.isEmpty()) {
+                TextButton(onClick = onDismiss) { Text("Después") }
+                Button(onClick = onUpdate) { Text("Actualizar") }
+            } else {
+                Button(onClick = onUpdate) { Text("Reintentar") }
+            }
         }
     }
 }
