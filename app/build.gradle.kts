@@ -17,6 +17,17 @@ android {
         versionName = System.getenv("VERSION_NAME") ?: "1.0"
     }
 
+    signingConfigs {
+        // Llave de firma fija guardada en el repo: cada versión se instala encima de la anterior.
+        // Sin esto, GitHub firma con una llave nueva en cada compilación y Android dice "conflicto de paquete".
+        getByName("debug") {
+            storeFile = file("netscan-debug.keystore")
+            storePassword = "netscan123"
+            keyAlias = "netscan"
+            keyPassword = "netscan123"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = false
