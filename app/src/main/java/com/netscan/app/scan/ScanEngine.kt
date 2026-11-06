@@ -136,6 +136,10 @@ class ScanEngine(private val context: Context) {
             d.sources.add("HTTP")
             if (d.deviceType == null) d.deviceType = typeFromServer(banner.server!!)
         }
+        // El CN del certificado a veces trae la marca/modelo.
+        if (d.model == null) banner.certCn?.let { cn ->
+            if (!cn.contains('.') || cn.count { it == '.' } <= 1) { d.model = cn; d.sources.add("TLS") }
+        }
     }
 
     /** Escaneo completo sin estados intermedios (para la vigilancia en segundo plano). */

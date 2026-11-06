@@ -11,6 +11,8 @@ import androidx.core.content.ContextCompat
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -41,7 +43,11 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             val dark = isSystemInDarkTheme()
-            val colors = if (dark) darkColorScheme(
+            val ctx = this
+            // Material You: en Android 12+ usamos el color del sistema; si no, el tema propio.
+            val colors = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                if (dark) dynamicDarkColorScheme(ctx) else dynamicLightColorScheme(ctx)
+            } else if (dark) darkColorScheme(
                 primary = Color(0xFF4DD0E1),
                 background = Color(0xFF0D1B2A),
                 surface = Color(0xFF13293D)

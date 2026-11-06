@@ -46,6 +46,19 @@ Extras de identificación:
 - **Actividad por aparato**: cuándo se ha conectado en los escaneos recientes.
 - **Búsqueda, filtros y orden** por IP, nombre o confianza.
 
+## Nivel profesional
+
+- **IP pública, ISP y ubicación** vista desde internet.
+- **Exposición a internet**: pregunta al router por UPnP qué puertos tiene reenviados (la causa #1 de cámaras/NAS expuestos) y te avisa.
+- **Huella TLS**: usa el nombre (CN) del certificado del aparato como pista de modelo.
+- **Velocidad pro**: varios flujos en paralelo, jitter y latencia bajo carga con calificación de **bufferbloat** (A–F).
+- **Ancho de canal** (20/40/80/160 MHz) y **tipo de seguridad** (WPA2/WPA3/abierta) de cada red vecina.
+- **Señal en vivo**: gráfica de la señal segundo a segundo para cazar puntos muertos.
+- **Línea de tiempo de novedades**: cuándo apareció cada aparato nuevo.
+- **Material You**: usa los colores del sistema en Android 12+.
+
+> Nota: la app se firma con una llave fija incluida en el repo a propósito, para que cada versión se instale sobre la anterior. No se cambia a una llave de "release" porque rompería la actualización automática sobre las instalaciones existentes.
+
 ## Límites honestos
 
 - En **Android 10+** leer la tabla ARP del sistema está restringido sin root, así que el **MAC de otros equipos** no siempre se consigue. Las demás capas compensan.

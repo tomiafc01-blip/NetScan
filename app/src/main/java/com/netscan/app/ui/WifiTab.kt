@@ -28,14 +28,24 @@ fun WifiTab(vm: ScanViewModel) {
     val speed by vm.speed.collectAsState()
     val aps by vm.aps.collectAsState()
     val signal by vm.signalMap.collectAsState()
+    val internet by vm.internet.collectAsState()
+    val exposure by vm.exposure.collectAsState()
+    val live by vm.liveSignal.collectAsState()
+    val liveRunning by vm.liveRunning.collectAsState()
 
-    LaunchedEffect(Unit) { vm.refreshAps(ctx) }
+    LaunchedEffect(Unit) {
+        vm.refreshAps(ctx)
+        if (internet.data == null) vm.refreshInternet()
+    }
 
     LazyColumn(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         contentPadding = PaddingValues(top = 10.dp, bottom = 30.dp)
     ) {
+        item { InternetCard(internet, onRefresh = { vm.refreshInternet() }) }
+        item { ExposureCard(exposure, onCheck = { vm.checkExposure() }) }
         item { SpeedCard(speed, onRun = { vm.runSpeedTest() }) }
+        item { LiveSignalCard(live, liveRunning, onToggle = { vm.toggleLiveSignal(ctx) }) }
         item { SignalCard(signal, onSample = { vm.sampleSignal(ctx, it) }, onClear = { vm.clearSignalMap() }) }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -60,6 +70,133 @@ fun WifiTab(vm: ScanViewModel) {
             item { ChannelAdvice(aps) }
             items(aps, key = { it.bssid }) { ap -> ApRow(ap) }
         }
+    }
+}
+
+@Composable
+private fun InternetCard(state: ScanViewModel.InternetState, onRefresh: () -> Unit) {
+    Card(shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Public, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text("Tu conexión a internet", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (state.loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else TextButton(onClick = onRefresh) { Text("Actualizar") }
+            }
+            val d = state.data
+            when {
+                d == null && !state.loading -> Text("Toca «Actualizar» para ver tu IP pública e ISP.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                d?.error != null -> Text(d.error, style = MaterialTheme.typography.bodySmall)
+                d != null -> Column(Modifier.padding(top = 6.dp)) {
+                    d.publicIp?.let { DetailRow("IP pública", it, mono = true) }
+                    d.isp?.let { DetailRow("Proveedor", it) }
+                    d.location()?.let { DetailRow("Ubicación vista", it) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ExposureCard(state: ScanViewModel.ExposureState, onCheck: () -> Unit) {
+    Card(shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Security, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text("Exposición a internet", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                if (state.loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else TextButton(onClick = onCheck) { Text(if (state.checked) "Revisar" else "Revisar") }
+            }
+            val r = state.result
+            when {
+                state.loading -> Text("Preguntando al router por UPnP…", style = MaterialTheme.typography.bodySmall)
+                !state.checked -> Text(
+                    "Revisa si el router tiene puertos abiertos hacia internet (reenvío de puertos), la causa #1 de cámaras y NAS expuestos.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                r == null || !r.available -> Text(
+                    "El router no respondió por UPnP (puede estar desactivado). Eso no confirma que no haya reenvíos; revísalo también en su panel.",
+                    style = MaterialTheme.typography.bodySmall)
+                r.mappings.isEmpty() -> Column {
+                    r.externalIp?.let { Text("IP del router: $it", style = MaterialTheme.typography.bodySmall) }
+                    Spacer(Modifier.height(4.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.CheckCircle, null, tint = Color(0xFF66BB6A), modifier = Modifier.size(18.dp))
+                        Text("  Sin puertos reenviados a internet.", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+                else -> Column {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, null, tint = Color(0xFFFFA726), modifier = Modifier.size(18.dp))
+                        Text("  ${r.mappings.size} puerto(s) abiertos hacia internet",
+                            style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                    }
+                    Text("Revisa que cada uno sea intencional. Si no reconoces alguno, bórralo en el router.",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                        modifier = Modifier.padding(vertical = 4.dp))
+                    r.mappings.take(12).forEach { m ->
+                        Text("· ${m.protocol} ${m.externalPort} → ${m.internalClient}:${m.internalPort}" +
+                            (if (m.description.isNotBlank()) "  (${m.description})" else ""),
+                            style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun LiveSignalCard(samples: List<Int>, running: Boolean, onToggle: () -> Unit) {
+    Card(shape = RoundedCornerShape(14.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+        Column(Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.ShowChart, null, tint = MaterialTheme.colorScheme.primary)
+                Spacer(Modifier.width(8.dp))
+                Text("Señal en vivo", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+                samples.lastOrNull()?.let {
+                    Text("$it dBm", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(8.dp))
+                Button(onClick = onToggle) { Text(if (running) "Detener" else "Iniciar") }
+            }
+            Text("Mide la señal de tu red cada segundo; úsalo para encontrar puntos muertos.",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.padding(vertical = 4.dp))
+            Sparkline(samples, Modifier.fillMaxWidth().height(70.dp).padding(top = 6.dp))
+        }
+    }
+}
+
+@Composable
+private fun Sparkline(values: List<Int>, modifier: Modifier) {
+    val line = MaterialTheme.colorScheme.primary
+    val grid = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f)
+    // Rango fijo típico de Wi-Fi: -30 (excelente) a -90 (malo).
+    val minD = -90f; val maxD = -30f
+    androidx.compose.foundation.Canvas(modifier) {
+        drawLine(grid, androidx.compose.ui.geometry.Offset(0f, size.height / 2),
+            androidx.compose.ui.geometry.Offset(size.width, size.height / 2), 1f)
+        if (values.size < 2) return@Canvas
+        val stepX = size.width / (values.size - 1)
+        fun y(v: Int): Float {
+            val c = v.coerceIn(minD.toInt(), maxD.toInt()).toFloat()
+            return size.height - (c - minD) / (maxD - minD) * size.height
+        }
+        val path = androidx.compose.ui.graphics.Path()
+        values.forEachIndexed { i, v ->
+            val px = i * stepX; val py = y(v)
+            if (i == 0) path.moveTo(px, py) else path.lineTo(px, py)
+        }
+        drawPath(path, line, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f))
     }
 }
 
@@ -105,12 +242,24 @@ private fun SpeedCard(state: ScanViewModel.SpeedState, onRun: () -> Unit) {
                         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                             Metric("Descarga", r.downMbps, "Mbps", Icons.Default.Download)
                             Metric("Subida", r.upMbps, "Mbps", Icons.Default.Upload)
-                            Metric("Latencia", r.pingMs, "ms", Icons.Default.Timer)
+                            Metric("Latencia", r.idlePingMs, "ms", Icons.Default.Timer)
+                        }
+                        Spacer(Modifier.height(10.dp))
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceAround,
+                            verticalAlignment = Alignment.CenterVertically) {
+                            SmallStat("Jitter", r.jitterMs?.let { "%.0f ms".format(it) } ?: "-")
+                            SmallStat("Bajo carga", r.loadedPingMs?.let { "%.0f ms".format(it) } ?: "-")
+                            BufferbloatBadge(r.bufferbloatGrade)
+                        }
+                        r.bufferbloatGrade?.let {
+                            Text(bufferbloatHint(it), style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                                modifier = Modifier.padding(top = 6.dp))
                         }
                     }
                 }
                 else -> Text(
-                    "Mide tu velocidad real de bajada, subida y latencia. Usa unos 15 MB de datos.",
+                    "Mide bajada y subida (varios flujos), latencia, jitter y bufferbloat. Usa ~40 MB de datos.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
                 )
@@ -128,6 +277,39 @@ private fun Metric(label: String, value: Double?, unit: String, icon: androidx.c
         Text("$unit · $label", style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
     }
+}
+
+@Composable
+private fun SmallStat(label: String, value: String) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(value, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text(label, style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    }
+}
+
+@Composable
+private fun BufferbloatBadge(grade: String?) {
+    val color = when (grade) {
+        "A" -> Color(0xFF66BB6A); "B" -> Color(0xFF9CCC65)
+        "C" -> Color(0xFFFFCA28); "D" -> Color(0xFFFFA726); else -> Color(0xFFE57373)
+    }
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(34.dp).clip(RoundedCornerShape(8.dp)).background(color.copy(alpha = 0.2f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Text(grade ?: "-", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = color)
+        }
+        Text("Bufferbloat", style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+    }
+}
+
+private fun bufferbloatHint(grade: String): String = when (grade) {
+    "A", "B" -> "La latencia casi no sube con carga: videollamadas y juegos irán bien."
+    "C" -> "La latencia sube algo bajo carga; puede notarse en juegos."
+    else -> "La latencia se dispara bajo carga (bufferbloat). Activa SQM/QoS en el router si puedes."
 }
 
 @Composable
@@ -233,7 +415,8 @@ private fun ApRow(ap: WifiAp) {
                 if (ap.isCurrent) { Spacer(Modifier.width(6.dp)); Badge("conectado") }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${ap.band} · canal ${ap.channel} · ", style = MaterialTheme.typography.labelSmall,
+                val width = if (ap.widthMhz > 0) " · ${ap.widthMhz}MHz" else ""
+                Text("${ap.band} · canal ${ap.channel}$width · ", style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 Icon(
                     if (ap.isInsecure) Icons.Default.LockOpen else Icons.Default.Lock,

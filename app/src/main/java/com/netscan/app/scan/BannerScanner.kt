@@ -50,7 +50,8 @@ object BannerScanner {
         val openPorts: List<Int>,
         val server: String?,
         val title: String?,
-        val webUrl: String? // Primera interfaz web que respondió
+        val webUrl: String?, // Primera interfaz web que respondió
+        val certCn: String? = null // CN del certificado HTTPS (pista de modelo)
     )
 
     suspend fun probe(ip: String): Hit = coroutineScope {
@@ -62,6 +63,7 @@ object BannerScanner {
         var server: String? = null
         var title: String? = null
         var webUrl: String? = null
+        var certCn: String? = null
         for (port in WEB_PORTS) {
             if (port !in open) continue
             val banner = readHttp(ip, port) ?: continue
@@ -69,11 +71,12 @@ object BannerScanner {
                 val scheme = if (port == 443 || port == 8443) "https" else "http"
                 webUrl = if (port == 80 || port == 443) "$scheme://$ip/" else "$scheme://$ip:$port/"
             }
-            server = server ?: banner.first
-            title = title ?: banner.second
-            if (server != null && title != null) break
+            server = server ?: banner.server
+            title = title ?: banner.title
+            certCn = certCn ?: banner.certCn
+            if (server != null && title != null && certCn != null) break
         }
-        Hit(open, server, title, webUrl)
+        Hit(open, server, title, webUrl, certCn)
     }
 
 
@@ -88,8 +91,10 @@ object BannerScanner {
         }
     }
 
-    /** Devuelve (Server, title). */
-    private fun readHttp(ip: String, port: Int): Pair<String?, String?>? {
+    private data class HttpInfo(val server: String?, val title: String?, val certCn: String?)
+
+    /** Lee Server, <title> y, en HTTPS, el nombre (CN) del certificado. */
+    private fun readHttp(ip: String, port: Int): HttpInfo? {
         val scheme = if (port == 443 || port == 8443) "https" else "http"
         return try {
             val url = URL("$scheme://$ip:$port/")
@@ -104,6 +109,7 @@ object BannerScanner {
             conn.requestMethod = "GET"
             conn.connect()
 
+            val certCn = if (conn is HttpsURLConnection) readCertCn(conn) else null
             val server = conn.getHeaderField("Server")
             val body = try {
                 conn.inputStream.bufferedReader().use { r ->
@@ -122,11 +128,23 @@ object BannerScanner {
 
             val title = Regex("<title>(.*?)</title>", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
                 .find(body)?.groupValues?.get(1)?.trim()?.ifEmpty { null }
-            Pair(server, title)
+            HttpInfo(server, title, certCn)
         } catch (_: Exception) {
             null
         }
     }
+
+    /** Extrae el CN del certificado del servidor; a veces trae la marca/modelo. */
+    private fun readCertCn(conn: HttpsURLConnection): String? = try {
+        val cert = conn.serverCertificates.firstOrNull() as? java.security.cert.X509Certificate
+        val dn = cert?.subjectX500Principal?.name ?: return null
+        val cn = Regex("CN=([^,]+)").find(dn)?.groupValues?.get(1)?.trim()
+        // Descartamos CN genéricos (IP, localhost, comodines) que no identifican nada.
+        cn?.takeIf {
+            it.length in 2..40 && !it.equals("localhost", true) &&
+            !it.startsWith("*") && !Regex("^[0-9.]+$").matches(it)
+        }
+    } catch (_: Exception) { null }
 
     private fun trustAllFactory() = try {
         val trustAll = arrayOf<TrustManager>(object : X509TrustManager {

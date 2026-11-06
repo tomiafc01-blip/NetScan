@@ -22,6 +22,9 @@ data class KnownDevice(
     fun displayName(): String = customName?.takeIf { it.isNotBlank() } ?: label
 }
 
+/** Un evento de aparición de un dispositivo nuevo. */
+data class DeviceEvent(val time: Long, val label: String, val ip: String, val mac: String?)
+
 /** Un escaneo terminado, para el historial. */
 data class ScanRecord(
     val time: Long,
@@ -115,7 +118,31 @@ class DeviceStore(context: Context) {
         }
         saveNetwork(network, obj)
         addRecord(ScanRecord(now, network, devices.size, newOnes.size))
+        if (newOnes.isNotEmpty()) appendEvents(network, newOnes, now)
         return newOnes
+    }
+
+    // ---------- Línea de tiempo de novedades (dispositivos nuevos) ----------
+
+    @Synchronized
+    fun events(network: String): List<DeviceEvent> {
+        val arr = JSONArray(prefs.getString("ev:$network", "[]"))
+        return (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            DeviceEvent(o.optLong("t"), o.optString("label"), o.optString("ip"), o.optString("mac").ifEmpty { null })
+        }.sortedByDescending { it.time }
+    }
+
+    private fun appendEvents(network: String, newOnes: List<Device>, now: Long) {
+        val arr = JSONArray(prefs.getString("ev:$network", "[]"))
+        for (d in newOnes) {
+            arr.put(JSONObject().put("t", now).put("label", d.autoLabel())
+                .put("ip", d.ip).put("mac", d.mac ?: ""))
+        }
+        val trimmed = JSONArray()
+        val start = (arr.length() - 100).coerceAtLeast(0)
+        for (i in start until arr.length()) trimmed.put(arr.get(i))
+        prefs.edit().putString("ev:$network", trimmed.toString()).apply()
     }
 
     /** Solo aplica nombres e historial sin guardar una visita (para refrescar la UI). */

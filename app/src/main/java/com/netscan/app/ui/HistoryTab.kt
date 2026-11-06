@@ -31,6 +31,7 @@ fun HistoryTab(vm: ScanViewModel) {
     val ctx = LocalContext.current
     val known by vm.known.collectAsState()
     val records by vm.records.collectAsState()
+    val events by vm.events.collectAsState()
     val watch by vm.watch.collectAsState()
     val network by vm.network.collectAsState()
     var forgetting by remember { mutableStateOf<KnownDevice?>(null) }
@@ -72,6 +73,11 @@ fun HistoryTab(vm: ScanViewModel) {
                     )
                 }
             }
+        }
+
+        if (events.isNotEmpty()) {
+            item { SectionTitle("Novedades · aparatos nuevos") }
+            items(events.take(15), key = { "e${it.time}${it.ip}" }) { e -> EventRow(e) }
         }
 
         item {
@@ -159,6 +165,23 @@ private fun KnownRow(k: KnownDevice, onForget: () -> Unit) {
                     Icon(Icons.Default.Delete, contentDescription = "Olvidar", modifier = Modifier.size(18.dp))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun EventRow(e: com.netscan.app.data.DeviceEvent) {
+    val rel = android.text.format.DateUtils.getRelativeTimeSpanString(
+        e.time, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS
+    )
+    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+        Icon(Icons.Default.NewReleases, null, modifier = Modifier.size(16.dp), tint = androidx.compose.ui.graphics.Color(0xFFFF9800))
+        Spacer(Modifier.width(8.dp))
+        Column(Modifier.weight(1f)) {
+            Text(e.label, style = MaterialTheme.typography.bodySmall, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text("$rel · ${e.ip}", style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
         }
     }
 }

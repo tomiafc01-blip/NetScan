@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.netscan.app.data.DeviceStore
 import com.netscan.app.data.KnownDevice
 import com.netscan.app.data.ScanRecord
+import com.netscan.app.data.DeviceEvent
 import com.netscan.app.data.WatchWorker
 import com.netscan.app.scan.Device
 import com.netscan.app.scan.NetworkInfo
@@ -20,6 +21,10 @@ import com.netscan.app.tools.SpeedResult
 import com.netscan.app.scan.RiskAnalyzer
 import com.netscan.app.scan.WifiAp
 import com.netscan.app.scan.WifiScanner
+import com.netscan.app.scan.IgdClient
+import com.netscan.app.scan.IgdResult
+import com.netscan.app.tools.InternetInfo
+import com.netscan.app.tools.InternetData
 import com.netscan.app.update.UpdateManager
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -47,6 +52,9 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     private val _records = MutableStateFlow<List<ScanRecord>>(emptyList())
     val records: StateFlow<List<ScanRecord>> = _records
+
+    private val _events = MutableStateFlow<List<DeviceEvent>>(emptyList())
+    val events: StateFlow<List<DeviceEvent>> = _events
 
     private val _watch = MutableStateFlow(store.watchEnabled)
     val watch: StateFlow<Boolean> = _watch
@@ -106,6 +114,56 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
 
     fun clearSignalMap() { _signalMap.value = emptyList() }
 
+    // --- Señal en vivo (sparkline de la red conectada) ---
+    private val _liveSignal = MutableStateFlow<List<Int>>(emptyList())
+    val liveSignal: StateFlow<List<Int>> = _liveSignal
+    private val _liveRunning = MutableStateFlow(false)
+    val liveRunning: StateFlow<Boolean> = _liveRunning
+    private var liveJob: kotlinx.coroutines.Job? = null
+
+    fun toggleLiveSignal(context: Context) {
+        if (_liveRunning.value) {
+            liveJob?.cancel(); _liveRunning.value = false; return
+        }
+        _liveSignal.value = emptyList()
+        _liveRunning.value = true
+        liveJob = viewModelScope.launch {
+            while (true) {
+                WifiScanner.currentRssi(context)?.let { r ->
+                    _liveSignal.value = (_liveSignal.value + r).takeLast(40)
+                }
+                kotlinx.coroutines.delay(1000)
+            }
+        }
+    }
+
+    // --- Internet (IP pública / ISP) ---
+    data class InternetState(val data: InternetData?, val loading: Boolean)
+    private val _internet = MutableStateFlow(InternetState(null, false))
+    val internet: StateFlow<InternetState> = _internet
+
+    fun refreshInternet() {
+        if (_internet.value.loading) return
+        _internet.value = InternetState(_internet.value.data, true)
+        viewModelScope.launch {
+            _internet.value = InternetState(InternetInfo.fetch(), false)
+        }
+    }
+
+    // --- Exposición a internet (puertos reenviados del router, UPnP/IGD) ---
+    data class ExposureState(val result: IgdResult?, val loading: Boolean, val checked: Boolean)
+    private val _exposure = MutableStateFlow(ExposureState(null, false, false))
+    val exposure: StateFlow<ExposureState> = _exposure
+
+    fun checkExposure() {
+        if (_exposure.value.loading) return
+        _exposure.value = ExposureState(null, true, false)
+        viewModelScope.launch {
+            val r = IgdClient.query(getApplication())
+            _exposure.value = ExposureState(r, false, true)
+        }
+    }
+
     // --- Auto-actualización ---
     enum class CheckStatus { IDLE, CHECKING, UP_TO_DATE, AVAILABLE, ERROR }
 
@@ -152,7 +210,10 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun refreshHistory() {
-        _network.value?.let { _known.value = store.known(it) }
+        _network.value?.let {
+            _known.value = store.known(it)
+            _events.value = store.events(it)
+        }
         _records.value = store.records()
     }
 

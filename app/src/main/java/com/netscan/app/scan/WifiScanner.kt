@@ -10,6 +10,7 @@ data class WifiAp(
     val rssi: Int,       // dBm (más cerca de 0 = más fuerte); 0 = sin dato
     val channel: Int,
     val band: String,    // "2.4 GHz", "5 GHz", "6 GHz"
+    val widthMhz: Int,   // 20, 40, 80, 160… (0 = desconocido)
     val security: String, // "Abierta", "WEP", "WPA2", "WPA3"…
     val isCurrent: Boolean
 ) {
@@ -44,6 +45,7 @@ object WifiScanner {
                     rssi = r.level,
                     channel = channelFor(freq),
                     band = bandFor(freq),
+                    widthMhz = widthOf(r),
                     security = securityOf(r.capabilities),
                     isCurrent = r.BSSID != null && r.BSSID == currentBssid
                 )
@@ -77,6 +79,16 @@ object WifiScanner {
             c.contains("ESS") -> "Abierta"
             else -> "?"
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun widthOf(r: android.net.wifi.ScanResult): Int = when (r.channelWidth) {
+        android.net.wifi.ScanResult.CHANNEL_WIDTH_20MHZ -> 20
+        android.net.wifi.ScanResult.CHANNEL_WIDTH_40MHZ -> 40
+        android.net.wifi.ScanResult.CHANNEL_WIDTH_80MHZ -> 80
+        android.net.wifi.ScanResult.CHANNEL_WIDTH_160MHZ -> 160
+        android.net.wifi.ScanResult.CHANNEL_WIDTH_80MHZ_PLUS_MHZ -> 160
+        else -> 0
     }
 
     private fun bandFor(freq: Int): String = when {
