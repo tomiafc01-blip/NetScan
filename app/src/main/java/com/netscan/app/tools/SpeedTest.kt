@@ -59,6 +59,7 @@ object SpeedTest {
             val loadedMed = median(loaded)
             SpeedResult(down, up, idle, loadedMed, jitter, grade(idle, loadedMed))
         } catch (e: Exception) {
+            com.netscan.app.data.Diag.log("SPEED", "Falló la prueba de velocidad", e)
             SpeedResult(null, null, null, null, null, null, e.message ?: "No se pudo conectar")
         }
     }

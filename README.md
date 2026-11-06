@@ -56,6 +56,7 @@ Extras de identificación:
 - **Señal en vivo**: gráfica de la señal segundo a segundo para cazar puntos muertos.
 - **Línea de tiempo de novedades**: cuándo apareció cada aparato nuevo.
 - **Material You**: usa los colores del sistema en Android 12+.
+- **Modo diagnóstico**: la app guarda los errores y cierres inesperados en un registro local; desde el icono de "bug" en la barra puedes **compartir un reporte** (con versión, modelo y Android) para reparar más fácil. Nada sale del teléfono hasta que lo compartes.
 
 > Nota: la app se firma con una llave fija incluida en el repo a propósito, para que cada versión se instale sobre la anterior. No se cambia a una llave de "release" porque rompería la actualización automática sobre las instalaciones existentes.
 

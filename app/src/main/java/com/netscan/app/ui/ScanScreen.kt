@@ -48,6 +48,7 @@ fun ScanScreen(vm: ScanViewModel) {
     val ctx = LocalContext.current
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var selectedIp by remember { mutableStateOf<String?>(null) }
+    var showDiag by remember { mutableStateOf(false) }
 
     LaunchedEffect(toast) {
         toast?.let {
@@ -66,6 +67,9 @@ fun ScanScreen(vm: ScanViewModel) {
                             IconButton(onClick = { vm.export(ctx) }) {
                                 Icon(Icons.Default.Share, contentDescription = "Exportar escaneo")
                             }
+                        }
+                        IconButton(onClick = { showDiag = true }) {
+                            Icon(Icons.Default.BugReport, contentDescription = "Diagnóstico")
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -99,6 +103,8 @@ fun ScanScreen(vm: ScanViewModel) {
             }
         }
     }
+
+    if (showDiag) DiagSheet(onDismiss = { showDiag = false })
 
     val selected = selectedIp?.let { ip -> state.devices.firstOrNull { it.ip == ip } }
     if (selected != null) {
