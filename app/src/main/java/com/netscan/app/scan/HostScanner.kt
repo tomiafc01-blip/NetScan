@@ -29,8 +29,9 @@ object HostScanner {
 
         val found = hosts.map { ip ->
             async(Dispatchers.IO) {
-                if (isAlive(ip)) {
-                    val d = Device(ip = ip)
+                val latency = probe(ip)
+                if (latency != null) {
+                    val d = Device(ip = ip, latencyMs = latency)
                     d.isGateway = (ip == net.gatewayIp)
                     d.isThisDevice = (ip == net.localIp)
                     onHostFound(d)
@@ -77,24 +78,37 @@ object HostScanner {
         return result
     }
 
-    /** ¿La IP responde a ICMP o a algún puerto TCP común? */
-    private suspend fun isAlive(ip: String): Boolean = withContext(Dispatchers.IO) {
+    /**
+     * ¿La IP responde a ICMP o a algún puerto TCP común?
+     * Devuelve la latencia en ms, o null si no respondió.
+     */
+    private suspend fun probe(ip: String): Int? = withContext(Dispatchers.IO) {
         try {
             val addr = InetAddress.getByName(ip)
-            if (addr.isReachable(600)) return@withContext true
+            val t0 = System.nanoTime()
+            if (addr.isReachable(600)) return@withContext elapsedMs(t0)
         } catch (_: Exception) {}
 
-        // Respaldo: intento de conexión TCP rápida.
+        // Respaldo: intento de conexión TCP rápida. Un "connection refused"
+        // también prueba que el host existe (respondió con RST).
         for (port in PROBE_PORTS) {
+            val t0 = System.nanoTime()
             try {
                 Socket().use { s ->
                     s.connect(InetSocketAddress(ip, port), 250)
-                    return@withContext true
+                    return@withContext elapsedMs(t0)
+                }
+            } catch (e: java.net.ConnectException) {
+                if (e.message?.contains("refused", ignoreCase = true) == true) {
+                    return@withContext elapsedMs(t0)
                 }
             } catch (_: Exception) {}
         }
-        false
+        null
     }
+
+    private fun elapsedMs(t0: Long): Int =
+        ((System.nanoTime() - t0) / 1_000_000).toInt().coerceAtLeast(1)
 
     /**
      * Lee /proc/net/arp. Devuelve mapa IP -> MAC.

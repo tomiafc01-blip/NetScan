@@ -1,6 +1,7 @@
 package com.netscan.app.scan
 
 import android.content.Context
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -13,7 +14,8 @@ data class ScanState(
     val running: Boolean = false,
     val phase: String = "",
     val net: LocalNet? = null,
-    val devices: List<Device> = emptyList()
+    val devices: List<Device> = emptyList(),
+    val rev: Int = 0 // Sube cuando cambian datos de un Device ya mostrado (p. ej. al renombrarlo)
 )
 
 /**
@@ -31,8 +33,11 @@ class ScanEngine(private val context: Context) {
         }
 
         val devices = LinkedHashMap<String, Device>()
-        fun snapshot(phase: String, running: Boolean = true) =
-            emit(ScanState(running, phase, net, devices.values.sortedBy { ipKey(it.ip) }))
+        // El barrido avisa desde varios hilos a la vez: protegemos el mapa.
+        fun snapshot(phase: String, running: Boolean = true) {
+            val list = synchronized(devices) { devices.values.sortedBy { ipKey(it.ip) } }
+            emit(ScanState(running, phase, net, list))
+        }
 
         snapshot("Buscando dispositivos activos…")
 
@@ -46,10 +51,10 @@ class ScanEngine(private val context: Context) {
 
         // Barrido de hosts (emite cada IP viva en cuanto aparece).
         HostScanner.sweep(net) { d ->
-            if (!devices.containsKey(d.ip)) {
-                devices[d.ip] = d
-                snapshot("Encontrados ${devices.size}…")
+            val added = synchronized(devices) {
+                if (devices.containsKey(d.ip)) false else { devices[d.ip] = d; true }
             }
+            if (added) snapshot("Encontrados ${devices.size}…")
         }
 
         snapshot("Identificando (mDNS / SSDP)…")
@@ -57,13 +62,16 @@ class ScanEngine(private val context: Context) {
         val ssdp = ssdpJob.await()
 
         for ((ip, hit) in mdns) {
+            if (!net.contains(ip)) continue
             val d = devices.getOrPut(ip) { Device(ip) }
             hit.name?.let { if (d.hostname == null) d.hostname = it }
             hit.model?.let { d.model = it }
             hit.type?.let { if (d.deviceType == null) d.deviceType = it }
+            d.services.addAll(hit.services)
             d.sources.add("mDNS")
         }
         for ((ip, hit) in ssdp) {
+            if (!net.contains(ip)) continue
             val d = devices.getOrPut(ip) { Device(ip) }
             hit.model?.let { d.model = it }
             hit.manufacturer?.let { if (d.vendor == null) d.vendor = it }
@@ -84,20 +92,24 @@ class ScanEngine(private val context: Context) {
                         if (h != d.ip) d.hostname = h.substringBefore('.')
                     } catch (_: Exception) {}
                 }
-                // NetBIOS
-                if (d.hostname == null) {
-                    NetbiosScanner.query(d.ip)?.let {
-                        d.hostname = it
+                // NetBIOS: nombre del equipo y, de regalo, su MAC real.
+                if (d.hostname == null || d.mac == null) {
+                    NetbiosScanner.query(d.ip)?.let { nb ->
+                        nb.name?.let {
+                            if (d.hostname == null) d.hostname = it
+                            if (d.deviceType == null) d.deviceType = "PC (Windows)"
+                        }
+                        nb.mac?.let { if (d.mac == null) d.mac = it }
                         d.sources.add("NetBIOS")
-                        if (d.deviceType == null) d.deviceType = "PC (Windows)"
                     }
                 }
                 // Banners HTTP + puertos
                 val banner = BannerScanner.probe(d.ip)
                 d.openPorts = banner.openPorts.toMutableList()
+                d.webUrl = banner.webUrl
                 if (banner.openPorts.isNotEmpty()) d.sources.add("Puertos")
                 if (d.model == null) {
-                    banner.title?.let { d.model = cleanTitle(it) }
+                    banner.title?.let { cleanTitle(it)?.let { t -> d.model = t } }
                 }
                 if (banner.server != null) {
                     d.sources.add("HTTP")
@@ -105,6 +117,14 @@ class ScanEngine(private val context: Context) {
                 }
             }
         }.awaitAll()
+
+        // Este teléfono: sabemos exactamente qué es.
+        devices[net.localIp]?.let { me ->
+            me.isThisDevice = true
+            me.model = "${Build.MANUFACTURER.replaceFirstChar { it.uppercase() }} ${Build.MODEL}"
+            me.deviceType = "Teléfono Android"
+            me.sources.add("Sistema")
+        }
 
         // OUI al final (solo útil si conseguimos MAC).
         for (d in devices.values) {
@@ -120,14 +140,31 @@ class ScanEngine(private val context: Context) {
         snapshot("Listo · ${devices.size} dispositivos", running = false)
     }
 
+    /** Escaneo completo sin estados intermedios (para la vigilancia en segundo plano). */
+    suspend fun runOnce(): ScanState {
+        var last = ScanState()
+        this.run { last = it }
+        return last
+    }
+
     private fun ipKey(ip: String): Long {
         val p = ip.split(".")
         if (p.size != 4) return Long.MAX_VALUE
         return p.fold(0L) { acc, s -> acc * 256 + (s.toLongOrNull() ?: 0) }
     }
 
-    private fun cleanTitle(t: String): String =
-        t.replace(Regex("\\s+"), " ").take(60)
+    /** Títulos web genéricos que no dicen nada del aparato. */
+    private val junkTitles = setOf(
+        "login", "log in", "index", "home", "welcome", "redirect", "redirecting",
+        "loading", "404", "403", "401", "error", "untitled", "document", "web", "sign in"
+    )
+
+    private fun cleanTitle(t: String): String? {
+        val c = t.replace(Regex("\\s+"), " ").trim().take(60)
+        if (c.length < 3 || c.lowercase().trim('.', '…') in junkTitles) return null
+        if (c.lowercase().startsWith("404") || c.lowercase().contains("not found")) return null
+        return c
+    }
 
     private fun typeFromServer(server: String): String? {
         val s = server.lowercase()

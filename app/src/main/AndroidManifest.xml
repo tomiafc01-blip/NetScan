@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <!-- Necesario para leer el nombre de la red (SSID) en Android 8+ -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <!-- Android 13+: descubrir y comunicarse con aparatos cercanos de la red local -->
+    <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" />
+    <!-- Aviso de dispositivo nuevo (Android 13+ lo pide en tiempo de ejecución) -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <!-- Para instalar el APK de actualización descargado dentro de la app -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 

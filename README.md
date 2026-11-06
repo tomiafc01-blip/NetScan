@@ -17,6 +17,23 @@ Combina 5 capas de identificación para sacar el máximo de cada dispositivo:
 
 Fusiona todo y muestra cada dispositivo con su mejor etiqueta, tipo, puertos abiertos y qué capa aportó cada dato.
 
+Extras de identificación:
+
+- **MAC por NetBIOS**: las PCs con Windows devuelven su MAC real en la respuesta NBSTAT, así el OUI sí funciona con ellas.
+- **Modelos de Apple traducidos**: `iPhone14,5` → «iPhone 13», `Mac14,2` → «MacBook Air M2», etc.
+- **Nivel de confianza** en cada aparato: 🟢 alta (el aparato publicó su modelo), 🟡 media (nombre o fabricante real), ⚪ baja (suposición por puertos).
+
+## Funciones
+
+- **Detalle por dispositivo**: toca una tarjeta para ver todo lo que se sabe (MAC, fabricante, modelo, puertos con nombre, servicios mDNS, latencia, primera vez visto).
+- **Nombres personalizados**: renombra «Samsung TV» como «TV sala»; el nombre se guarda por red.
+- **Historial**: pestaña con todos los aparatos que se han conectado a cada red, cuándo se vieron por primera y última vez, y los últimos escaneos.
+- **Alerta de dispositivo nuevo**: aviso en pantalla tras cada escaneo y, si activas **Vigilar mi red**, notificación en segundo plano (escaneo cada 30 min con Wi-Fi).
+- **Ping**: 10 paquetes con mínimo, promedio, máximo y pérdida, más un veredicto en lenguaje claro.
+- **Wake-on-LAN**: enciende PCs que lo tengan activado (necesita conocer su MAC).
+- **Abrir interfaz web** del router, cámara o NAS, y copiar IP/MAC.
+- **Exportar** el escaneo a CSV (se abre en Excel o Sheets) desde el botón compartir.
+
 ## Límites honestos
 
 - En **Android 10+** leer la tabla ARP del sistema está restringido sin root, así que el **MAC de otros equipos** no siempre se consigue. Las demás capas compensan.
@@ -26,6 +43,8 @@ Fusiona todo y muestra cada dispositivo con su mejor etiqueta, tipo, puertos abi
 ## Permisos
 
 - `ACCESS_FINE_LOCATION`: obligatorio desde Android 8 para leer el nombre de la red (SSID). Se pide al abrir la app.
+- `NEARBY_WIFI_DEVICES`: Android 13+ (incluido Android 16), para comunicarse con aparatos de la red local. Se pide al abrir la app.
+- `POST_NOTIFICATIONS`: solo si activas **Vigilar mi red**, para avisarte de aparatos nuevos.
 
 ## Compilar
 

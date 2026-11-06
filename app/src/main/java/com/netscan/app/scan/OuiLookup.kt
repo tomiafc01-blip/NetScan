@@ -35,7 +35,7 @@ object OuiLookup {
         // Un MAC con el 2.º bit menos significativo del 1.er byte activo
         // es aleatorio/local: el OUI no identifica al fabricante real.
         val firstByte = hex.substring(0, 2).toIntOrNull(16) ?: return null
-        if ((firstByte and 0x02) != 0) return "MAC aleatoria (privado)"
+        if ((firstByte and 0x02) != 0) return Device.MAC_RANDOM
         return table?.get(hex.substring(0, 6))
     }
 }

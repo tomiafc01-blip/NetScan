@@ -20,7 +20,7 @@ import javax.net.ssl.X509TrustManager
  */
 object BannerScanner {
 
-    private val WEB_PORTS = listOf(80, 8080, 443)
+    private val WEB_PORTS = listOf(80, 8080, 443, 8443)
     // Puertos característicos: cada uno delata un tipo de aparato aunque no haya MAC.
     private val COMMON_PORTS = listOf(
         22,     // SSH (Linux / servidor / Raspberry Pi)
@@ -44,7 +44,12 @@ object BannerScanner {
         62078   // lockdownd (iPhone / iPad)
     )
 
-    data class Hit(val openPorts: List<Int>, val server: String?, val title: String?)
+    data class Hit(
+        val openPorts: List<Int>,
+        val server: String?,
+        val title: String?,
+        val webUrl: String? // Primera interfaz web que respondió
+    )
 
     suspend fun probe(ip: String): Hit = coroutineScope {
         // Revisamos todos los puertos en paralelo para no alargar el escaneo.
@@ -54,14 +59,19 @@ object BannerScanner {
 
         var server: String? = null
         var title: String? = null
+        var webUrl: String? = null
         for (port in WEB_PORTS) {
             if (port !in open) continue
             val banner = readHttp(ip, port) ?: continue
+            if (webUrl == null) {
+                val scheme = if (port == 443 || port == 8443) "https" else "http"
+                webUrl = if (port == 80 || port == 443) "$scheme://$ip/" else "$scheme://$ip:$port/"
+            }
             server = server ?: banner.first
             title = title ?: banner.second
             if (server != null && title != null) break
         }
-        Hit(open, server, title)
+        Hit(open, server, title, webUrl)
     }
 
 

@@ -13,6 +13,10 @@ data class LocalNet(
     val gatewayIp: String?,
     val ssid: String?
 ) {
+    /** ¿La IP pertenece a nuestra subred /24? (filtra respuestas de otras redes) */
+    fun contains(ip: String): Boolean =
+        ip.substringBeforeLast('.') == localIp.substringBeforeLast('.')
+
     /** Lista de IPs del mismo subred (solo /24 o más estrecho, para no barrer de más). */
     fun subnetHosts(): List<String> {
         val parts = localIp.split(".")
