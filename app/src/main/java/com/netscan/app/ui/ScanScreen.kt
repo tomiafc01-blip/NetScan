@@ -63,7 +63,15 @@ fun ScanScreen(vm: ScanViewModel) {
 
             val update by vm.update.collectAsState()
             val updatePhase by vm.updatePhase.collectAsState()
+            val checkStatus by vm.checkStatus.collectAsState()
             val ctx = LocalContext.current
+
+            VersionRow(
+                version = vm.currentVersion,
+                status = checkStatus,
+                onCheck = { vm.checkForUpdate(manual = true) }
+            )
+
             update?.let { rel ->
                 UpdateBanner(
                     versionName = rel.versionName,
@@ -114,6 +122,44 @@ private fun NetHeader(ssid: String?, ip: String?, phase: String) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary
             )
+        }
+    }
+}
+
+@Composable
+private fun VersionRow(
+    version: String,
+    status: ScanViewModel.CheckStatus,
+    onCheck: () -> Unit
+) {
+    val checking = status == ScanViewModel.CheckStatus.CHECKING
+    val statusText = when (status) {
+        ScanViewModel.CheckStatus.CHECKING -> "Buscando…"
+        ScanViewModel.CheckStatus.UP_TO_DATE -> "Estás al día ✓"
+        ScanViewModel.CheckStatus.ERROR -> "No se pudo comprobar"
+        else -> null
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Text(
+            "Versión $version",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+        )
+        statusText?.let {
+            Text(
+                "  ·  $it",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.primary
+            )
+        }
+        Spacer(Modifier.weight(1f))
+        TextButton(onClick = onCheck, enabled = !checking) {
+            Text("Buscar actualizaciones")
         }
     }
 }

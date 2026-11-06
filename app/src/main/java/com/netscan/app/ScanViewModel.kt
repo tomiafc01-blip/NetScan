@@ -19,11 +19,16 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
     val state: StateFlow<ScanState> = _state
 
     // --- Auto-actualización ---
+    enum class CheckStatus { IDLE, CHECKING, UP_TO_DATE, AVAILABLE, ERROR }
+
     private val _update = MutableStateFlow<UpdateManager.Release?>(null)
     val update: StateFlow<UpdateManager.Release?> = _update
 
     private val _updatePhase = MutableStateFlow("")
     val updatePhase: StateFlow<String> = _updatePhase
+
+    private val _checkStatus = MutableStateFlow(CheckStatus.IDLE)
+    val checkStatus: StateFlow<CheckStatus> = _checkStatus
 
     val currentVersion: String get() = UpdateManager.currentVersionName
 
@@ -39,10 +44,19 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun checkForUpdate() {
+    /** Comprueba si hay actualización. [manual] muestra feedback aunque ya esté al día. */
+    fun checkForUpdate(manual: Boolean = false) {
         viewModelScope.launch {
-            val latest = UpdateManager.fetchLatest() ?: return@launch
-            if (UpdateManager.isNewer(latest)) _update.value = latest
+            _checkStatus.value = CheckStatus.CHECKING
+            val latest = UpdateManager.fetchLatest()
+            when {
+                latest == null -> _checkStatus.value = CheckStatus.ERROR
+                UpdateManager.isNewer(latest) -> {
+                    _update.value = latest
+                    _checkStatus.value = CheckStatus.AVAILABLE
+                }
+                else -> _checkStatus.value = CheckStatus.UP_TO_DATE
+            }
         }
     }
 
@@ -73,5 +87,9 @@ class ScanViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun dismissUpdate() { _update.value = null; _updatePhase.value = "" }
+    fun dismissUpdate() {
+        _update.value = null
+        _updatePhase.value = ""
+        _checkStatus.value = CheckStatus.IDLE
+    }
 }
