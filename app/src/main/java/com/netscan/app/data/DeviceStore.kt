@@ -16,7 +16,8 @@ data class KnownDevice(
     val type: String?,
     val firstSeen: Long,
     val lastSeen: Long,
-    val timesSeen: Int
+    val timesSeen: Int,
+    val trusted: Boolean
 ) {
     fun displayName(): String = customName?.takeIf { it.isNotBlank() } ?: label
 }
@@ -87,6 +88,7 @@ class DeviceStore(context: Context) {
                 d.isNew = false
                 d.firstSeen = prev.optLong("first", now)
                 d.customName = prev.optString("custom").ifEmpty { null }
+                d.trusted = prev.optBoolean("trust", false)
             }
             val o = prev ?: JSONObject()
             o.put("label", d.autoLabel())
@@ -96,6 +98,13 @@ class DeviceStore(context: Context) {
             o.put("first", d.firstSeen ?: now)
             o.put("last", now)
             o.put("count", (prev?.optInt("count", 0) ?: 0) + 1)
+            // Registro de actividad: últimas 30 veces que se vio.
+            val seen = prev?.optJSONArray("seen") ?: JSONArray()
+            seen.put(now)
+            val trimmed = JSONArray()
+            val start = (seen.length() - 30).coerceAtLeast(0)
+            for (i in start until seen.length()) trimmed.put(seen.get(i))
+            o.put("seen", trimmed)
             // Si antes lo teníamos por IP y ahora sabemos el MAC, migramos la clave.
             if (key != d.key() && d.key().startsWith("mac:")) {
                 obj.remove(key)
@@ -117,7 +126,17 @@ class DeviceStore(context: Context) {
             val prev = obj.optJSONObject(findKey(obj, d)) ?: continue
             d.customName = prev.optString("custom").ifEmpty { null }
             d.firstSeen = prev.optLong("first")
+            d.trusted = prev.optBoolean("trust", false)
         }
+    }
+
+    /** Marcas de tiempo (ms) de las últimas veces que se vio el dispositivo. */
+    @Synchronized
+    fun seenTimes(network: String, device: Device): List<Long> {
+        val obj = loadNetwork(network)
+        val o = obj.optJSONObject(findKey(obj, device)) ?: return emptyList()
+        val arr = o.optJSONArray("seen") ?: return emptyList()
+        return (0 until arr.length()).map { arr.optLong(it) }
     }
 
     @Synchronized
@@ -135,6 +154,23 @@ class DeviceStore(context: Context) {
         obj.put(key, o)
         saveNetwork(network, obj)
         device.customName = name?.trim()?.ifEmpty { null }
+    }
+
+    @Synchronized
+    fun setTrusted(network: String, device: Device, trusted: Boolean) {
+        val obj = loadNetwork(network)
+        val key = findKey(obj, device)
+        val o = obj.optJSONObject(key) ?: JSONObject().apply {
+            put("label", device.autoLabel())
+            put("ip", device.ip)
+            put("first", System.currentTimeMillis())
+            put("last", System.currentTimeMillis())
+            put("count", 1)
+        }
+        o.put("trust", trusted)
+        obj.put(key, o)
+        saveNetwork(network, obj)
+        device.trusted = trusted
     }
 
     @Synchronized
@@ -199,6 +235,7 @@ class DeviceStore(context: Context) {
         type = o.optString("type").ifEmpty { null },
         firstSeen = o.optLong("first"),
         lastSeen = o.optLong("last"),
-        timesSeen = o.optInt("count", 1)
+        timesSeen = o.optInt("count", 1),
+        trusted = o.optBoolean("trust", false)
     )
 }

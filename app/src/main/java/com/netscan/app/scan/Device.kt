@@ -25,7 +25,9 @@ data class Device(
     // --- Datos del historial (DeviceStore) ---
     var customName: String? = null,
     var firstSeen: Long? = null,
-    var isNew: Boolean = false
+    var isNew: Boolean = false,
+    var trusted: Boolean = false,
+    var risks: List<Risk> = emptyList()
 ) {
     /**
      * Clave estable para el historial: el MAC si lo tenemos y no es aleatorio;

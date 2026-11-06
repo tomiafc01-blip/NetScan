@@ -30,6 +30,7 @@ class WatchWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx,
         val network = store.networkId(net)
         val newOnes = store.applyAndSave(network, state.devices)
         Notifier.notifyNewDevices(applicationContext, network, newOnes)
+        com.netscan.app.widget.NetScanWidget.refresh(applicationContext)
         return Result.success()
     }
 

@@ -23,8 +23,10 @@ object BannerScanner {
     private val WEB_PORTS = listOf(80, 8080, 443, 8443)
     // Puertos característicos: cada uno delata un tipo de aparato aunque no haya MAC.
     private val COMMON_PORTS = listOf(
+        21,     // FTP (sin cifrar)
         22,     // SSH (Linux / servidor / Raspberry Pi)
         23,     // Telnet (IoT viejo)
+        2323,   // Telnet alternativo (IoT)
         53,     // DNS (router)
         80, 443, 8080, 8443, // web
         139, 445,            // SMB (PC Windows / NAS)

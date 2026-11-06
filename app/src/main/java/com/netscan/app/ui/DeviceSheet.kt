@@ -32,6 +32,7 @@ import java.util.Date
 fun DeviceSheet(device: Device, rev: Int, vm: ScanViewModel, onDismiss: () -> Unit) {
     val ctx = LocalContext.current
     val ping by vm.ping.collectAsState()
+    val portScan by vm.portScan.collectAsState()
     var renaming by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
@@ -90,6 +91,39 @@ fun DeviceSheet(device: Device, rev: Int, vm: ScanViewModel, onDismiss: () -> Un
                     if (device.isThisDevice) { Spacer(Modifier.width(4.dp)); Badge("este equipo") }
                 }
 
+                // --- Confianza ---
+                if (!device.isThisDevice) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            if (device.trusted) Icons.Default.Verified else Icons.Default.ShieldMoon,
+                            null,
+                            tint = if (device.trusted) androidx.compose.ui.graphics.Color(0xFF66BB6A)
+                            else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("Aparato de confianza", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Los de confianza no generan alertas de «nuevo».",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                            )
+                        }
+                        Switch(checked = device.trusted, onCheckedChange = { vm.setTrusted(device, it) })
+                    }
+                }
+
+                // --- Seguridad ---
+                if (device.risks.isNotEmpty()) {
+                    Spacer(Modifier.height(12.dp))
+                    Text("Seguridad", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    device.risks.forEach { r -> RiskCard(r, onOpenWeb = { openUrl(ctx, device.webUrl ?: "http://${device.ip}/") }) }
+                }
+
                 // --- Acciones ---
                 Spacer(Modifier.height(14.dp))
                 FlowRow(
@@ -97,6 +131,7 @@ fun DeviceSheet(device: Device, rev: Int, vm: ScanViewModel, onDismiss: () -> Un
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     ActionChip(Icons.Default.Speed, "Ping") { vm.runPing(device.ip) }
+                    ActionChip(Icons.Default.Scanner, "Escanear puertos") { vm.runPortScan(device.ip) }
                     if (device.mac != null && !device.isThisDevice) {
                         ActionChip(Icons.Default.PowerSettingsNew, "Encender (WOL)") { vm.wake(device) }
                     }
@@ -150,6 +185,37 @@ fun DeviceSheet(device: Device, rev: Int, vm: ScanViewModel, onDismiss: () -> Un
                     }
                 }
 
+                // --- Resultado del escaneo de puertos ---
+                val ps = portScan
+                if (ps != null && ps.ip == device.ip) {
+                    Spacer(Modifier.height(10.dp))
+                    Surface(
+                        shape = MaterialTheme.shapes.medium,
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.4f),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            val open = ps.open
+                            if (open == null) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                                    val pct = if (ps.total > 0) ps.done * 100 / ps.total else 0
+                                    Text("  Escaneando puertos 1–1024… $pct %", style = MaterialTheme.typography.bodySmall)
+                                }
+                            } else if (open.isEmpty()) {
+                                Text("No se encontraron puertos abiertos (1–1024).", style = MaterialTheme.typography.bodySmall)
+                            } else {
+                                Text("Puertos abiertos (1–1024):", style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    open.joinToString(", ") { p -> com.netscan.app.tools.PortScanner.names[p]?.let { "$p ($it)" } ?: "$p" },
+                                    style = MaterialTheme.typography.bodySmall
+                                )
+                            }
+                        }
+                    }
+                }
+
                 // --- Detalle ---
                 Spacer(Modifier.height(14.dp))
                 HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
@@ -176,6 +242,26 @@ fun DeviceSheet(device: Device, rev: Int, vm: ScanViewModel, onDismiss: () -> Un
                 }
                 if (device.sources.isNotEmpty()) {
                     DetailRow("Detectado por", device.sources.joinToString(", "))
+                }
+
+                // --- Actividad ---
+                val seen = remember(device.ip, rev) { vm.activity(device) }
+                if (seen.size >= 2) {
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.1f))
+                    Spacer(Modifier.height(8.dp))
+                    Text("Actividad", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Detectado en ${seen.size} escaneos. Últimas conexiones:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                    )
+                    seen.sortedDescending().take(6).forEach { t ->
+                        val rel = android.text.format.DateUtils.getRelativeTimeSpanString(
+                            t, System.currentTimeMillis(), android.text.format.DateUtils.MINUTE_IN_MILLIS
+                        )
+                        Text("· $rel", style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             }
         }
@@ -221,6 +307,31 @@ private fun RenameDialog(
         confirmButton = { TextButton(onClick = { onSave(text.ifBlank { null }) }) { Text("Guardar") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
     )
+}
+
+@Composable
+private fun RiskCard(r: com.netscan.app.scan.Risk, onOpenWeb: () -> Unit) {
+    val color = riskColor(r.level)
+    Surface(
+        shape = MaterialTheme.shapes.medium,
+        color = color.copy(alpha = 0.12f),
+        modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+    ) {
+        Row(Modifier.padding(12.dp)) {
+            Icon(Icons.Default.Warning, null, tint = color, modifier = Modifier.size(20.dp))
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(r.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
+                Text(r.detail, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.8f))
+                if (r.title.contains("router", ignoreCase = true)) {
+                    TextButton(onClick = onOpenWeb, contentPadding = PaddingValues(0.dp)) {
+                        Text("Abrir panel del router")
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable

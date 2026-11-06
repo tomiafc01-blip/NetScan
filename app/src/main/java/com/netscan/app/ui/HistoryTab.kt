@@ -134,7 +134,14 @@ private fun KnownRow(k: KnownDevice, onForget: () -> Unit) {
             Icon(iconForType(k.type), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(26.dp))
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(k.displayName(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(k.displayName(), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (k.trusted) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Default.Verified, "de confianza",
+                            tint = androidx.compose.ui.graphics.Color(0xFF66BB6A), modifier = Modifier.size(14.dp))
+                    }
+                }
                 Text(
                     "Última vez: ${df.format(Date(k.lastSeen))} · visto ${k.timesSeen}×",
                     style = MaterialTheme.typography.bodySmall,

@@ -3,9 +3,11 @@ package com.netscan.app.ui
 import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,6 +28,14 @@ import androidx.compose.ui.unit.dp
 import com.netscan.app.ScanViewModel
 import com.netscan.app.scan.Confidence
 import com.netscan.app.scan.Device
+import com.netscan.app.scan.RiskAnalyzer
+import com.netscan.app.scan.RiskLevel
+
+private enum class Filter(val label: String) {
+    TODOS("Todos"), RIESGOS("Con riesgo"), NO_CONFIABLES("No confiables"), NUEVOS("Nuevos")
+}
+
+private enum class Sort(val label: String) { IP("IP"), NOMBRE("Nombre"), CONFIANZA("Confianza") }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -49,8 +59,10 @@ fun ScanScreen(vm: ScanViewModel) {
                 TopAppBar(
                     title = { Text("NetScan", fontWeight = FontWeight.Bold) },
                     actions = {
-                        IconButton(onClick = { vm.export(ctx) }) {
-                            Icon(Icons.Default.Share, contentDescription = "Exportar escaneo")
+                        if (tab == 0) {
+                            IconButton(onClick = { vm.export(ctx) }) {
+                                Icon(Icons.Default.Share, contentDescription = "Exportar escaneo")
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(
@@ -60,7 +72,9 @@ fun ScanScreen(vm: ScanViewModel) {
                 TabRow(selectedTabIndex = tab, containerColor = MaterialTheme.colorScheme.surface) {
                     Tab(selected = tab == 0, onClick = { tab = 0 },
                         text = { Text("Red") }, icon = { Icon(Icons.Default.Radar, null) })
-                    Tab(selected = tab == 1, onClick = { tab = 1; vm.refreshHistory() },
+                    Tab(selected = tab == 1, onClick = { tab = 1 },
+                        text = { Text("Wi-Fi") }, icon = { Icon(Icons.Default.NetworkWifi, null) })
+                    Tab(selected = tab == 2, onClick = { tab = 2; vm.refreshHistory() },
                         text = { Text("Historial") }, icon = { Icon(Icons.Default.History, null) })
                 }
             }
@@ -92,22 +106,21 @@ fun ScanScreen(vm: ScanViewModel) {
                 .padding(padding)
                 .padding(horizontal = 12.dp)
         ) {
-            if (tab == 0) {
-                NetworkTab(vm, state.rev, onSelect = { selectedIp = it.ip })
-            } else {
-                HistoryTab(vm)
+            when (tab) {
+                0 -> NetworkTab(vm, state.rev, onSelect = { selectedIp = it.ip })
+                1 -> WifiTab(vm)
+                else -> HistoryTab(vm)
             }
         }
     }
 
-    // Hoja de detalle del dispositivo seleccionado.
     val selected = selectedIp?.let { ip -> state.devices.firstOrNull { it.ip == ip } }
     if (selected != null) {
         DeviceSheet(
             device = selected,
             rev = state.rev,
             vm = vm,
-            onDismiss = { selectedIp = null; vm.clearPing() }
+            onDismiss = { selectedIp = null; vm.clearPing(); vm.clearPortScan() }
         )
     }
 }
@@ -121,26 +134,49 @@ private fun NetworkTab(vm: ScanViewModel, rev: Int, onSelect: (Device) -> Unit) 
     val newDevices by vm.newDevices.collectAsState()
     val ctx = LocalContext.current
 
-    Column(Modifier.fillMaxSize()) {
-        NetHeader(state.net?.ssid, state.net?.localIp, state.phase, state.devices)
+    var query by rememberSaveable { mutableStateOf("") }
+    var filter by rememberSaveable { mutableStateOf(Filter.TODOS) }
+    var sort by rememberSaveable { mutableStateOf(Sort.IP) }
+    var subnetDialog by remember { mutableStateOf(false) }
 
-        VersionRow(
-            version = vm.currentVersion,
-            status = checkStatus,
-            onCheck = { vm.checkForUpdate(manual = true) }
-        )
+    val shown = remember(state.devices, state.rev, query, filter, sort) {
+        state.devices.asSequence()
+            .filter { d ->
+                when (filter) {
+                    Filter.TODOS -> true
+                    Filter.RIESGOS -> d.risks.isNotEmpty()
+                    Filter.NO_CONFIABLES -> !d.trusted && !d.isThisDevice
+                    Filter.NUEVOS -> d.isNew
+                }
+            }
+            .filter { d ->
+                query.isBlank() || listOfNotNull(
+                    d.bestLabel(), d.ip, d.mac, d.vendor, d.hostname, d.model, d.deviceType
+                ).any { it.contains(query, ignoreCase = true) }
+            }
+            .sortedWith(when (sort) {
+                Sort.IP -> compareBy { ipKey(it.ip) }
+                Sort.NOMBRE -> compareBy { it.bestLabel().lowercase() }
+                Sort.CONFIANZA -> compareByDescending { it.confidence().ordinalHigh() }
+            })
+            .toList()
+    }
+
+    Column(Modifier.fillMaxSize()) {
+        NetHeader(state.net?.ssid, state.net?.localIp, state.phase, state.devices,
+            onScanSubnet = { subnetDialog = true })
+
+        VersionRow(vm.currentVersion, checkStatus) { vm.checkForUpdate(manual = true) }
 
         update?.let { rel ->
-            UpdateBanner(
-                versionName = rel.versionName,
-                phase = updatePhase,
-                onUpdate = { vm.runUpdate(ctx) },
-                onDismiss = { vm.dismissUpdate() }
-            )
+            UpdateBanner(rel.versionName, updatePhase, { vm.runUpdate(ctx) }, { vm.dismissUpdate() })
+        }
+        if (newDevices.isNotEmpty()) {
+            NewDevicesBanner(newDevices) { vm.dismissNew() }
         }
 
-        if (newDevices.isNotEmpty()) {
-            NewDevicesBanner(newDevices, onDismiss = { vm.dismissNew() })
+        if (state.devices.isNotEmpty() || state.running) {
+            FilterBar(query, { query = it }, filter, { filter = it }, sort, { sort = it })
         }
 
         if (state.devices.isEmpty() && !state.running) {
@@ -150,9 +186,100 @@ private fun NetworkTab(vm: ScanViewModel, rev: Int, onSelect: (Device) -> Unit) 
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(bottom = 90.dp)
             ) {
-                items(state.devices, key = { it.ip }) { d ->
-                    // rev obliga a redibujar cuando cambia un nombre.
+                items(shown, key = { it.ip }) { d ->
                     key(rev) { DeviceCard(d, onClick = { onSelect(d) }) }
+                }
+                if (shown.isEmpty()) {
+                    item {
+                        Text("Nada coincide con el filtro.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                    }
+                }
+            }
+        }
+    }
+
+    if (subnetDialog) {
+        SubnetDialog(
+            current = state.net?.localIp,
+            onScan = { subnetDialog = false; vm.scanSubnet(it) },
+            onDismiss = { subnetDialog = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun FilterBar(
+    query: String, onQuery: (String) -> Unit,
+    filter: Filter, onFilter: (Filter) -> Unit,
+    sort: Sort, onSort: (Sort) -> Unit
+) {
+    Column(Modifier.padding(bottom = 6.dp)) {
+        OutlinedTextField(
+            value = query, onValueChange = onQuery,
+            placeholder = { Text("Buscar nombre, IP, MAC…") },
+            leadingIcon = { Icon(Icons.Default.Search, null) },
+            trailingIcon = {
+                if (query.isNotEmpty()) IconButton(onClick = { onQuery("") }) { Icon(Icons.Default.Clear, null) }
+            },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth()
+        )
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .horizontalScroll(rememberScrollState())
+                .padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Filter.values().forEach { f ->
+                FilterChip(selected = filter == f, onClick = { onFilter(f) }, label = { Text(f.label) })
+            }
+            VerticalDivider(Modifier.height(24.dp).padding(horizontal = 2.dp))
+            Icon(Icons.Default.Sort, null, modifier = Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            Sort.values().forEach { srt ->
+                FilterChip(selected = sort == srt, onClick = { onSort(srt) }, label = { Text(srt.label) })
+            }
+        }
+    }
+}
+
+@Composable
+private fun NetHeader(ssid: String?, ip: String?, phase: String, devices: List<Device>, onScanSubnet: () -> Unit) {
+    Column(Modifier.padding(vertical = 10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.Wifi, null, tint = MaterialTheme.colorScheme.primary)
+            Spacer(Modifier.width(8.dp))
+            Text(ssid ?: "Red Wi-Fi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.weight(1f))
+            IconButton(onClick = onScanSubnet) {
+                Icon(Icons.Default.Lan, contentDescription = "Escanear otra subred")
+            }
+        }
+        if (ip != null) {
+            Text("Tu IP: $ip", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+        }
+        if (phase.isNotEmpty()) {
+            Text(phase, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+        }
+        if (devices.isNotEmpty()) {
+            val risky = devices.count { it.risks.isNotEmpty() }
+            val untrusted = devices.count { !it.trusted && !it.isThisDevice }
+            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("${devices.size} dispositivos", style = MaterialTheme.typography.labelMedium)
+                if (risky > 0) {
+                    Text("  ·  ", style = MaterialTheme.typography.labelMedium)
+                    Icon(Icons.Default.Warning, null, tint = Color(0xFFE57373), modifier = Modifier.size(14.dp))
+                    Text(" $risky con riesgo", style = MaterialTheme.typography.labelMedium, color = Color(0xFFE57373))
+                }
+                if (untrusted > 0) {
+                    Text("  ·  $untrusted sin confiar", style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 }
             }
         }
@@ -160,42 +287,33 @@ private fun NetworkTab(vm: ScanViewModel, rev: Int, onSelect: (Device) -> Unit) 
 }
 
 @Composable
-private fun NetHeader(ssid: String?, ip: String?, phase: String, devices: List<Device>) {
-    Column(Modifier.padding(vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Wifi, null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
-            Text(
-                ssid ?: "Red Wi-Fi",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-        }
-        if (ip != null) {
-            Text(
-                "Tu IP: $ip",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-            )
-        }
-        if (phase.isNotEmpty()) {
-            Text(
-                phase,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
-        }
-        if (devices.isNotEmpty()) {
-            val high = devices.count { it.confidence() == Confidence.HIGH }
-            val med = devices.count { it.confidence() == Confidence.MEDIUM }
-            val low = devices.size - high - med
-            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                ConfidenceDot(Confidence.HIGH); Text(" $high  ", style = MaterialTheme.typography.labelSmall)
-                ConfidenceDot(Confidence.MEDIUM); Text(" $med  ", style = MaterialTheme.typography.labelSmall)
-                ConfidenceDot(Confidence.LOW); Text(" $low identificados", style = MaterialTheme.typography.labelSmall)
+private fun SubnetDialog(current: String?, onScan: (String) -> Unit, onDismiss: () -> Unit) {
+    val guess = current?.substringBeforeLast('.')?.let {
+        // Sugerimos la subred vecina (.0 -> .1).
+        val parts = it.split('.')
+        if (parts.size == 3) "${parts[0]}.${parts[1]}.${(parts[2].toIntOrNull() ?: 0) + 1}" else "192.168.1"
+    } ?: "192.168.1"
+    var text by remember { mutableStateOf(guess) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Escanear otra subred") },
+        text = {
+            Column {
+                Text("Útil para la red de invitados o un repetidor. Escribe los 3 primeros números.",
+                    style = MaterialTheme.typography.bodySmall)
+                Spacer(Modifier.height(8.dp))
+                OutlinedTextField(value = text, onValueChange = { text = it.take(15) },
+                    singleLine = true, placeholder = { Text("192.168.1") },
+                    label = { Text("Subred") })
+                Text("Sin mDNS/SSDP: esta vista identifica por puertos, NetBIOS y fabricante.",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    modifier = Modifier.padding(top = 6.dp))
             }
-        }
-    }
+        },
+        confirmButton = { TextButton(onClick = { onScan(text) }) { Text("Escanear") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } }
+    )
 }
 
 @Composable
@@ -203,9 +321,7 @@ private fun NewDevicesBanner(devices: List<Device>, onDismiss: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = Color(0xFFFFB74D).copy(alpha = 0.18f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 8.dp)
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
     ) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.NewReleases, null, tint = Color(0xFFFF9800))
@@ -214,15 +330,10 @@ private fun NewDevicesBanner(devices: List<Device>, onDismiss: () -> Unit) {
                 Text(
                     if (devices.size == 1) "1 dispositivo nuevo en tu red"
                     else "${devices.size} dispositivos nuevos en tu red",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
+                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold
                 )
-                Text(
-                    devices.take(3).joinToString(" · ") { it.bestLabel() },
-                    style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Text(devices.take(3).joinToString(" · ") { it.bestLabel() },
+                    style = MaterialTheme.typography.bodySmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             TextButton(onClick = onDismiss) { Text("Visto") }
         }
@@ -230,11 +341,7 @@ private fun NewDevicesBanner(devices: List<Device>, onDismiss: () -> Unit) {
 }
 
 @Composable
-private fun VersionRow(
-    version: String,
-    status: ScanViewModel.CheckStatus,
-    onCheck: () -> Unit
-) {
+private fun VersionRow(version: String, status: ScanViewModel.CheckStatus, onCheck: () -> Unit) {
     val checking = status == ScanViewModel.CheckStatus.CHECKING
     val statusText = when (status) {
         ScanViewModel.CheckStatus.CHECKING -> "Buscando…"
@@ -242,63 +349,32 @@ private fun VersionRow(
         ScanViewModel.CheckStatus.ERROR -> "No se pudo comprobar"
         else -> null
     }
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
-    ) {
-        Text(
-            "Versión $version",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
-        )
+    Row(Modifier.fillMaxWidth().padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+        Text("Versión $version", style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
         statusText?.let {
-            Text(
-                "  ·  $it",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.primary
-            )
+            Text("  ·  $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
         }
         Spacer(Modifier.weight(1f))
-        TextButton(onClick = onCheck, enabled = !checking) {
-            Text("Buscar actualizaciones")
-        }
+        TextButton(onClick = onCheck, enabled = !checking) { Text("Buscar actualizaciones") }
     }
 }
 
 @Composable
-private fun UpdateBanner(
-    versionName: String,
-    phase: String,
-    onUpdate: () -> Unit,
-    onDismiss: () -> Unit
-) {
+private fun UpdateBanner(versionName: String, phase: String, onUpdate: () -> Unit, onDismiss: () -> Unit) {
     Surface(
         shape = RoundedCornerShape(12.dp),
         color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(bottom = 8.dp)
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
     ) {
-        Row(
-            Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Default.SystemUpdate, null, tint = MaterialTheme.colorScheme.primary)
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    "Actualización disponible · v$versionName",
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Text("Actualización disponible · v$versionName",
+                    style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold)
                 if (phase.isNotEmpty()) {
-                    Text(
-                        phase,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Text(phase, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
                 }
             }
             if (phase.isEmpty()) {
@@ -315,17 +391,12 @@ private fun UpdateBanner(
 private fun EmptyHint() {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(
-                Icons.Default.TravelExplore, null,
-                modifier = Modifier.size(56.dp),
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
-            )
+            Icon(Icons.Default.TravelExplore, null, modifier = Modifier.size(56.dp),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f))
             Spacer(Modifier.height(8.dp))
-            Text(
-                "Toca «Escanear» para descubrir\nlos dispositivos de tu red",
+            Text("Toca «Escanear» para descubrir\nlos dispositivos de tu red",
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-            )
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
         }
     }
 }
@@ -334,54 +405,45 @@ private fun EmptyHint() {
 private fun DeviceCard(d: Device, onClick: () -> Unit) {
     Card(
         shape = RoundedCornerShape(14.dp),
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surface
-        )
+        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box {
-                Icon(
-                    iconFor(d), null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(32.dp)
-                )
+                Icon(iconFor(d), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                 Box(Modifier.align(Alignment.BottomEnd)) { ConfidenceDot(d.confidence()) }
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text(
-                    d.bestLabel(),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(d.bestLabel(), style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    if (d.trusted) {
+                        Spacer(Modifier.width(4.dp))
+                        Icon(Icons.Default.Verified, "de confianza", tint = Color(0xFF66BB6A),
+                            modifier = Modifier.size(15.dp))
+                    }
+                }
                 val sub = d.subLabel()
                 if (sub.isNotEmpty()) {
-                    Text(
-                        sub,
-                        style = MaterialTheme.typography.bodySmall,
+                    Text(sub, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                        maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (d.risks.isNotEmpty()) {
+                    val worst = RiskAnalyzer.worst(d.risks)
+                    Row(Modifier.padding(top = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Default.Warning, null, tint = riskColor(worst), modifier = Modifier.size(13.dp))
+                        Text(" ${d.risks.size} ${if (d.risks.size == 1) "aviso" else "avisos"} de seguridad",
+                            style = MaterialTheme.typography.labelSmall, color = riskColor(worst))
+                    }
                 }
             }
             Column(horizontalAlignment = Alignment.End) {
-                Text(
-                    d.ip,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontFamily = FontFamily.Monospace
-                )
+                Text(d.ip, style = MaterialTheme.typography.bodySmall, fontFamily = FontFamily.Monospace)
                 d.latencyMs?.let {
-                    Text(
-                        "$it ms",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f)
-                    )
+                    Text("$it ms", style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.5f))
                 }
                 if (d.isNew) Badge("NUEVO", Color(0xFFFF9800))
                 if (d.isGateway) Badge("router")
@@ -393,34 +455,36 @@ private fun DeviceCard(d: Device, onClick: () -> Unit) {
 
 @Composable
 internal fun Badge(text: String, color: Color = MaterialTheme.colorScheme.primary) {
-    Surface(
-        color = color.copy(alpha = 0.18f),
-        shape = RoundedCornerShape(6.dp),
-        modifier = Modifier.padding(top = 2.dp)
-    ) {
-        Text(
-            text,
-            style = MaterialTheme.typography.labelSmall,
-            color = color,
-            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
-        )
+    Surface(color = color.copy(alpha = 0.18f), shape = RoundedCornerShape(6.dp), modifier = Modifier.padding(top = 2.dp)) {
+        Text(text, style = MaterialTheme.typography.labelSmall, color = color,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp))
     }
 }
 
 @Composable
 internal fun ConfidenceDot(c: Confidence) {
-    Box(
-        Modifier
-            .size(10.dp)
-            .clip(CircleShape)
-            .background(confidenceColor(c))
-    )
+    Box(Modifier.size(10.dp).clip(CircleShape).background(confidenceColor(c)))
 }
 
 internal fun confidenceColor(c: Confidence): Color = when (c) {
     Confidence.HIGH -> Color(0xFF66BB6A)
     Confidence.MEDIUM -> Color(0xFFFFCA28)
     Confidence.LOW -> Color(0xFF9E9E9E)
+}
+
+internal fun riskColor(level: RiskLevel?): Color = when (level) {
+    RiskLevel.HIGH -> Color(0xFFE57373)
+    RiskLevel.MEDIUM -> Color(0xFFFFB74D)
+    else -> Color(0xFF90A4AE)
+}
+
+private fun Confidence.ordinalHigh(): Int = when (this) {
+    Confidence.HIGH -> 2; Confidence.MEDIUM -> 1; Confidence.LOW -> 0
+}
+
+internal fun ipKey(ip: String): Long {
+    val p = ip.split("."); if (p.size != 4) return Long.MAX_VALUE
+    return p.fold(0L) { acc, s -> acc * 256 + (s.toLongOrNull() ?: 0) }
 }
 
 internal fun iconFor(d: Device): ImageVector = iconForType(d.deviceType, d.isGateway)

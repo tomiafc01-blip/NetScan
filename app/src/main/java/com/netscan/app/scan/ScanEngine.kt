@@ -82,40 +82,8 @@ class ScanEngine(private val context: Context) {
         snapshot("Consultando nombres y servicios…")
 
         // Por host: NetBIOS + banners + DNS inverso, en paralelo.
-        val list = devices.values.toList()
-        list.map { d ->
-            async(Dispatchers.IO) {
-                // DNS inverso
-                if (d.hostname == null) {
-                    try {
-                        val h = InetAddress.getByName(d.ip).canonicalHostName
-                        if (h != d.ip) d.hostname = h.substringBefore('.')
-                    } catch (_: Exception) {}
-                }
-                // NetBIOS: nombre del equipo y, de regalo, su MAC real.
-                if (d.hostname == null || d.mac == null) {
-                    NetbiosScanner.query(d.ip)?.let { nb ->
-                        nb.name?.let {
-                            if (d.hostname == null) d.hostname = it
-                            if (d.deviceType == null) d.deviceType = "PC (Windows)"
-                        }
-                        nb.mac?.let { if (d.mac == null) d.mac = it }
-                        d.sources.add("NetBIOS")
-                    }
-                }
-                // Banners HTTP + puertos
-                val banner = BannerScanner.probe(d.ip)
-                d.openPorts = banner.openPorts.toMutableList()
-                d.webUrl = banner.webUrl
-                if (banner.openPorts.isNotEmpty()) d.sources.add("Puertos")
-                if (d.model == null) {
-                    banner.title?.let { cleanTitle(it)?.let { t -> d.model = t } }
-                }
-                if (banner.server != null) {
-                    d.sources.add("HTTP")
-                    if (d.deviceType == null) d.deviceType = typeFromServer(banner.server!!)
-                }
-            }
+        devices.values.toList().map { d ->
+            async(Dispatchers.IO) { enrichHost(d) }
         }.awaitAll()
 
         // Este teléfono: sabemos exactamente qué es.
@@ -135,9 +103,39 @@ class ScanEngine(private val context: Context) {
                 }
             }
             inferType(d)
+            d.risks = RiskAnalyzer.analyze(d)
         }
 
         snapshot("Listo · ${devices.size} dispositivos", running = false)
+    }
+
+    /** Enriquecimiento por host: DNS inverso + NetBIOS + banners/puertos. */
+    private suspend fun enrichHost(d: Device) {
+        if (d.hostname == null) {
+            try {
+                val h = InetAddress.getByName(d.ip).canonicalHostName
+                if (h != d.ip) d.hostname = h.substringBefore('.')
+            } catch (_: Exception) {}
+        }
+        if (d.hostname == null || d.mac == null) {
+            NetbiosScanner.query(d.ip)?.let { nb ->
+                nb.name?.let {
+                    if (d.hostname == null) d.hostname = it
+                    if (d.deviceType == null) d.deviceType = "PC (Windows)"
+                }
+                nb.mac?.let { if (d.mac == null) d.mac = it }
+                d.sources.add("NetBIOS")
+            }
+        }
+        val banner = BannerScanner.probe(d.ip)
+        d.openPorts = banner.openPorts.toMutableList()
+        d.webUrl = banner.webUrl
+        if (banner.openPorts.isNotEmpty()) d.sources.add("Puertos")
+        if (d.model == null) banner.title?.let { cleanTitle(it)?.let { t -> d.model = t } }
+        if (banner.server != null) {
+            d.sources.add("HTTP")
+            if (d.deviceType == null) d.deviceType = typeFromServer(banner.server!!)
+        }
     }
 
     /** Escaneo completo sin estados intermedios (para la vigilancia en segundo plano). */
@@ -145,6 +143,36 @@ class ScanEngine(private val context: Context) {
         var last = ScanState()
         this.run { last = it }
         return last
+    }
+
+    /**
+     * Escanea una subred distinta a la del teléfono (p. ej. red de invitados
+     * o la del repetidor). Sin mDNS/SSDP porque no cruzan subredes.
+     * [base] es los tres primeros octetos, p. ej. "192.168.1".
+     */
+    suspend fun runSubnet(base: String, ssid: String?, emit: (ScanState) -> Unit) = coroutineScope {
+        // Sin gateway conocido: no marcamos .1 como router para no inventar.
+        val net = LocalNet(localIp = "$base.0", prefixLength = 24, gatewayIp = null, ssid = ssid)
+        val devices = LinkedHashMap<String, Device>()
+        fun snapshot(phase: String, running: Boolean = true) {
+            val list = synchronized(devices) { devices.values.sortedBy { ipKey(it.ip) } }
+            emit(ScanState(running, phase, net, list))
+        }
+        snapshot("Buscando en $base.0/24…")
+        HostScanner.sweep(net) { d ->
+            val added = synchronized(devices) {
+                if (devices.containsKey(d.ip)) false else { devices[d.ip] = d; true }
+            }
+            if (added) snapshot("Encontrados ${devices.size}…")
+        }
+        snapshot("Consultando nombres y servicios…")
+        devices.values.toList().map { d -> async(Dispatchers.IO) { enrichHost(d) } }.awaitAll()
+        for (d in devices.values) {
+            if (d.vendor == null) OuiLookup.vendorFor(context, d.mac)?.let { d.vendor = it; d.sources.add("OUI") }
+            inferType(d)
+            d.risks = RiskAnalyzer.analyze(d)
+        }
+        snapshot("Listo · ${devices.size} en $base.0/24", running = false)
     }
 
     private fun ipKey(ip: String): Long {
