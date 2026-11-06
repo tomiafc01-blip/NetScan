@@ -43,8 +43,8 @@ object WifiScanner {
                     ssid = r.SSID?.ifEmpty { "(red oculta)" } ?: "(red oculta)",
                     bssid = r.BSSID ?: "",
                     rssi = r.level,
-                    channel = channelFor(freq),
-                    band = bandFor(freq),
+                    channel = ChannelUtils.channelFor(freq),
+                    band = ChannelUtils.bandFor(freq),
                     widthMhz = widthOf(r),
                     security = securityOf(r.capabilities),
                     isCurrent = r.BSSID != null && r.BSSID == currentBssid
@@ -91,18 +91,5 @@ object WifiScanner {
         else -> 0
     }
 
-    private fun bandFor(freq: Int): String = when {
-        freq in 2400..2500 -> "2.4 GHz"
-        freq in 5000..5900 -> "5 GHz"
-        freq in 5925..7125 -> "6 GHz"
-        else -> "?"
-    }
 
-    private fun channelFor(freq: Int): Int = when {
-        freq == 2484 -> 14
-        freq in 2412..2472 -> (freq - 2412) / 5 + 1
-        freq in 5000..5900 -> (freq - 5000) / 5
-        freq in 5925..7125 -> (freq - 5950) / 5 + 1
-        else -> 0
-    }
 }

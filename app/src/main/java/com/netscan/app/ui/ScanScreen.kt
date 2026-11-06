@@ -30,6 +30,9 @@ import com.netscan.app.scan.Confidence
 import com.netscan.app.scan.Device
 import com.netscan.app.scan.RiskAnalyzer
 import com.netscan.app.scan.RiskLevel
+import com.netscan.app.ui.components.GradientFab
+import com.netscan.app.ui.components.HeroHeader
+import com.netscan.app.ui.components.pressable
 
 private enum class Filter(val label: String) {
     TODOS("Todos"), RIESGOS("Con riesgo"), NO_CONFIABLES("No confiables"), NUEVOS("Nuevos")
@@ -80,24 +83,7 @@ fun ScanScreen(vm: ScanViewModel) {
             }
         },
         floatingActionButton = {
-            if (tab == 0) {
-                ExtendedFloatingActionButton(
-                    onClick = { vm.startScan() },
-                    icon = {
-                        if (state.running) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(20.dp),
-                                strokeWidth = 2.dp,
-                                color = MaterialTheme.colorScheme.onPrimary
-                            )
-                        } else {
-                            Icon(Icons.Default.Radar, contentDescription = null)
-                        }
-                    },
-                    text = { Text(if (state.running) "Escaneando…" else "Escanear") },
-                    containerColor = MaterialTheme.colorScheme.primary
-                )
-            }
+            if (tab == 0) GradientFab(scanning = state.running) { vm.startScan() }
         }
     ) { padding ->
         Box(
@@ -163,8 +149,17 @@ private fun NetworkTab(vm: ScanViewModel, rev: Int, onSelect: (Device) -> Unit) 
     }
 
     Column(Modifier.fillMaxSize()) {
-        NetHeader(state.net?.ssid, state.net?.localIp, state.phase, state.devices,
-            onScanSubnet = { subnetDialog = true })
+        HeroHeader(
+            ssid = state.net?.ssid,
+            ip = state.net?.localIp,
+            phase = state.phase,
+            deviceCount = state.devices.size,
+            riskCount = state.devices.count { it.risks.isNotEmpty() },
+            untrusted = state.devices.count { !it.trusted && !it.isThisDevice },
+            onScanSubnet = { subnetDialog = true },
+            composition = { CompositionBar(state.devices, Modifier.fillMaxWidth()) }
+        )
+        Spacer(Modifier.height(10.dp))
 
         VersionRow(vm.currentVersion, checkStatus) { vm.checkForUpdate(manual = true) }
 
@@ -193,7 +188,7 @@ private fun NetworkTab(vm: ScanViewModel, rev: Int, onSelect: (Device) -> Unit) 
                 contentPadding = PaddingValues(bottom = 90.dp)
             ) {
                 items(shown, key = { it.ip }) { d ->
-                    key(rev) { DeviceCard(d, onClick = { onSelect(d) }) }
+                    key(rev) { DeviceCard(d, Modifier.animateItem(), onClick = { onSelect(d) }) }
                 }
                 if (shown.isEmpty()) {
                     item {
@@ -254,44 +249,6 @@ private fun FilterBar(
     }
 }
 
-@Composable
-private fun NetHeader(ssid: String?, ip: String?, phase: String, devices: List<Device>, onScanSubnet: () -> Unit) {
-    Column(Modifier.padding(vertical = 10.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Default.Wifi, null, tint = MaterialTheme.colorScheme.primary)
-            Spacer(Modifier.width(8.dp))
-            Text(ssid ?: "Red Wi-Fi", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.weight(1f))
-            IconButton(onClick = onScanSubnet) {
-                Icon(Icons.Default.Lan, contentDescription = "Escanear otra subred")
-            }
-        }
-        if (ip != null) {
-            Text("Tu IP: $ip", style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-        }
-        if (phase.isNotEmpty()) {
-            Text(phase, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
-        }
-        if (devices.isNotEmpty()) {
-            val risky = devices.count { it.risks.isNotEmpty() }
-            val untrusted = devices.count { !it.trusted && !it.isThisDevice }
-            Row(Modifier.padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("${devices.size} dispositivos", style = MaterialTheme.typography.labelMedium)
-                if (risky > 0) {
-                    Text("  ·  ", style = MaterialTheme.typography.labelMedium)
-                    Icon(Icons.Default.Warning, null, tint = Color(0xFFE57373), modifier = Modifier.size(14.dp))
-                    Text(" $risky con riesgo", style = MaterialTheme.typography.labelMedium, color = Color(0xFFE57373))
-                }
-                if (untrusted > 0) {
-                    Text("  ·  $untrusted sin confiar", style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                }
-            }
-            CompositionBar(devices, Modifier.fillMaxWidth().padding(top = 6.dp))
-        }
-    }
-}
 
 @Composable
 private fun SubnetDialog(current: String?, onScan: (String) -> Unit, onDismiss: () -> Unit) {
@@ -409,13 +366,17 @@ private fun EmptyHint() {
 }
 
 @Composable
-private fun DeviceCard(d: Device, onClick: () -> Unit) {
+private fun DeviceCard(d: Device, modifier: Modifier = Modifier, onClick: () -> Unit) {
+    // Franja de acento: rojo/ámbar si hay riesgo, si no el color de confianza.
+    val accent = if (d.risks.isNotEmpty()) riskColor(RiskAnalyzer.worst(d.risks)) else confidenceColor(d.confidence())
     Card(
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth().clickable(onClick = onClick),
+        shape = RoundedCornerShape(16.dp),
+        modifier = modifier.fillMaxWidth().pressable(onClick = onClick),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
-        Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.height(IntrinsicSize.Min)) {
+            Box(Modifier.width(4.dp).fillMaxHeight().background(accent))
+            Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
             Box {
                 Icon(iconFor(d), null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(32.dp))
                 Box(Modifier.align(Alignment.BottomEnd)) { ConfidenceDot(d.confidence()) }
@@ -455,6 +416,7 @@ private fun DeviceCard(d: Device, onClick: () -> Unit) {
                 if (d.isNew) Badge("NUEVO", Color(0xFFFF9800))
                 if (d.isGateway) Badge("router")
                 if (d.isThisDevice) Badge("este equipo")
+            }
             }
         }
     }
