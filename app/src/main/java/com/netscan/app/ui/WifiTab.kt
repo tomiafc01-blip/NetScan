@@ -67,6 +67,15 @@ fun WifiTab(vm: ScanViewModel) {
             aps.firstOrNull { it.isCurrent }?.let { cur ->
                 if (cur.isInsecure) item { InsecureWarn(cur) }
             }
+            if (aps.any { it.band == "2.4 GHz" }) {
+                item {
+                    Column {
+                        Text("Ocupación 2.4 GHz · canales 1–13", style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        ChannelSpectrum(aps, Modifier.fillMaxWidth().height(56.dp).padding(top = 4.dp))
+                    }
+                }
+            }
             item { ChannelAdvice(aps) }
             items(aps, key = { it.bssid }) { ap -> ApRow(ap) }
         }

@@ -175,6 +175,12 @@ private fun NetworkTab(vm: ScanViewModel, rev: Int, onSelect: (Device) -> Unit) 
             NewDevicesBanner(newDevices) { vm.dismissNew() }
         }
 
+        if (state.running) {
+            Box(Modifier.fillMaxWidth().padding(vertical = 4.dp), contentAlignment = Alignment.Center) {
+                ScanRadar(state.devices.size, running = true, modifier = Modifier.size(150.dp))
+            }
+        }
+
         if (state.devices.isNotEmpty() || state.running) {
             FilterBar(query, { query = it }, filter, { filter = it }, sort, { sort = it })
         }
@@ -282,6 +288,7 @@ private fun NetHeader(ssid: String?, ip: String?, phase: String, devices: List<D
                         color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                 }
             }
+            CompositionBar(devices, Modifier.fillMaxWidth().padding(top = 6.dp))
         }
     }
 }
