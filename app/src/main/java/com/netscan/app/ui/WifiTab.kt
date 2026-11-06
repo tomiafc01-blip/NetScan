@@ -54,6 +54,9 @@ fun WifiTab(vm: ScanViewModel) {
                 )
             }
         } else {
+            aps.firstOrNull { it.isCurrent }?.let { cur ->
+                if (cur.isInsecure) item { InsecureWarn(cur) }
+            }
             item { ChannelAdvice(aps) }
             items(aps, key = { it.bssid }) { ap -> ApRow(ap) }
         }
@@ -174,6 +177,22 @@ private fun SignalCard(
 }
 
 @Composable
+private fun InsecureWarn(ap: WifiAp) {
+    Surface(shape = RoundedCornerShape(10.dp),
+        color = Color(0xFFE57373).copy(alpha = 0.15f),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.LockOpen, null, tint = Color(0xFFE57373))
+            Spacer(Modifier.width(10.dp))
+            Text(
+                "Estás conectado a una red ${ap.security.lowercase()}. El tráfico puede ir sin cifrar; evita banca o contraseñas y, si es tuya, ponle WPA2/WPA3.",
+                style = MaterialTheme.typography.bodySmall
+            )
+        }
+    }
+}
+
+@Composable
 private fun ChannelAdvice(aps: List<WifiAp>) {
     // En 2.4 GHz solo 1, 6 y 11 no se pisan. Recomendamos el menos usado.
     val band24 = aps.filter { it.band == "2.4 GHz" }
@@ -213,21 +232,36 @@ private fun ApRow(ap: WifiAp) {
                     style = MaterialTheme.typography.bodyMedium)
                 if (ap.isCurrent) { Spacer(Modifier.width(6.dp)); Badge("conectado") }
             }
-            Text("${ap.band} · canal ${ap.channel}", style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("${ap.band} · canal ${ap.channel} · ", style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                Icon(
+                    if (ap.isInsecure) Icons.Default.LockOpen else Icons.Default.Lock,
+                    null, modifier = Modifier.size(11.dp),
+                    tint = if (ap.isInsecure) Color(0xFFE57373)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
+                )
+                Text(" ${ap.security}", style = MaterialTheme.typography.labelSmall,
+                    color = if (ap.isInsecure) Color(0xFFE57373)
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+            }
         }
         QualityBar(ap.quality, Modifier.width(70.dp))
-        Text("  ${ap.rssi}", style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
+        Text(if (ap.hasSignal) "  ${ap.rssi}" else "  —",
+            style = MaterialTheme.typography.labelSmall, fontFamily = FontFamily.Monospace)
     }
 }
 
 @Composable
 private fun QualityBar(quality: Int, modifier: Modifier = Modifier) {
+    // quality < 0 = sin lectura de señal: barra gris vacía.
     val color = when {
+        quality < 0 -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.3f)
         quality >= 66 -> Color(0xFF66BB6A)
         quality >= 33 -> Color(0xFFFFCA28)
         else -> Color(0xFFE57373)
     }
+    val fill = if (quality < 0) 0f else quality / 100f
     Box(
         modifier
             .height(8.dp)
@@ -237,7 +271,7 @@ private fun QualityBar(quality: Int, modifier: Modifier = Modifier) {
         Box(
             Modifier
                 .fillMaxHeight()
-                .fillMaxWidth(quality / 100f)
+                .fillMaxWidth(fill)
                 .clip(RoundedCornerShape(4.dp))
                 .background(color)
         )
