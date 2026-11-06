@@ -1,7 +1,9 @@
 package com.netscan.app.scan
 
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import java.net.HttpURLConnection
 import java.net.InetSocketAddress
 import java.net.Socket
@@ -19,12 +21,37 @@ import javax.net.ssl.X509TrustManager
 object BannerScanner {
 
     private val WEB_PORTS = listOf(80, 8080, 443)
-    private val COMMON_PORTS = listOf(22, 23, 80, 139, 443, 445, 515, 554, 631, 1883, 8080, 8443, 9100, 62078)
+    // Puertos característicos: cada uno delata un tipo de aparato aunque no haya MAC.
+    private val COMMON_PORTS = listOf(
+        22,     // SSH (Linux / servidor / Raspberry Pi)
+        23,     // Telnet (IoT viejo)
+        53,     // DNS (router)
+        80, 443, 8080, 8443, // web
+        139, 445,            // SMB (PC Windows / NAS)
+        515, 631, 9100,      // impresoras (LPD / IPP / RAW)
+        548,    // AFP (Apple / NAS)
+        554, 8554, // RTSP (cámara IP)
+        1400,   // Sonos
+        1883, 8883, // MQTT (IoT / domótica)
+        2869,   // UPnP Windows
+        3389,   // RDP (Windows)
+        5000, 5001, // Synology / UPnP
+        5555,   // ADB (Android / Fire TV)
+        7000,   // AirPlay
+        8009,   // Chromecast / Google Cast
+        9000,   // varios NAS / media
+        32469,  // Plex DLNA
+        62078   // lockdownd (iPhone / iPad)
+    )
 
     data class Hit(val openPorts: List<Int>, val server: String?, val title: String?)
 
-    suspend fun probe(ip: String): Hit = withContext(Dispatchers.IO) {
-        val open = COMMON_PORTS.filter { isOpen(ip, it) }
+    suspend fun probe(ip: String): Hit = coroutineScope {
+        // Revisamos todos los puertos en paralelo para no alargar el escaneo.
+        val open = COMMON_PORTS.map { port ->
+            async(Dispatchers.IO) { if (isOpen(ip, port)) port else null }
+        }.awaitAll().filterNotNull().sorted()
+
         var server: String? = null
         var title: String? = null
         for (port in WEB_PORTS) {
@@ -36,6 +63,7 @@ object BannerScanner {
         }
         Hit(open, server, title)
     }
+
 
     private fun isOpen(ip: String, port: Int): Boolean {
         return try {

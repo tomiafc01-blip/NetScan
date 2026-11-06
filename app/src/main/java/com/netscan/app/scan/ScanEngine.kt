@@ -142,13 +142,25 @@ class ScanEngine(private val context: Context) {
 
     private fun inferType(d: Device) {
         if (d.deviceType != null) return
+        val p = d.openPorts
         d.deviceType = when {
             d.isGateway -> "Router / puerta de enlace"
-            9100 in d.openPorts || 515 in d.openPorts || 631 in d.openPorts -> "Impresora"
-            554 in d.openPorts -> "Cámara IP"
-            62078 in d.openPorts -> "Dispositivo Apple"
-            445 in d.openPorts || 139 in d.openPorts -> "PC / NAS (SMB)"
-            22 in d.openPorts -> "Equipo Linux / servidor"
+            8009 in p -> "Chromecast / Google TV"
+            1400 in p -> "Sonos"
+            7000 in p -> "Apple / AirPlay"
+            62078 in p -> "iPhone / iPad"
+            32469 in p -> "Servidor Plex"
+            5000 in p || 5001 in p -> "NAS (Synology)"
+            9100 in p || 515 in p || 631 in p -> "Impresora"
+            554 in p || 8554 in p -> "Cámara IP"
+            3389 in p || 2869 in p -> "PC (Windows)"
+            445 in p || 139 in p -> "PC / NAS (SMB)"
+            548 in p -> "Equipo Apple / NAS"
+            5555 in p -> "Android / Fire TV (ADB)"
+            1883 in p || 8883 in p -> "Dispositivo IoT / domótica"
+            23 in p -> "Dispositivo IoT"
+            22 in p -> "Equipo Linux / servidor"
+            53 in p && 80 in p -> "Router / servidor DNS"
             else -> null
         }
     }

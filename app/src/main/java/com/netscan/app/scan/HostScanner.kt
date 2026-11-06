@@ -40,14 +40,41 @@ object HostScanner {
         }.awaitAll().filterNotNull()
 
         // Tras el barrido, la caché ARP del kernel suele estar poblada.
+        // Probamos dos vías: /proc/net/arp y el comando `ip neigh` (a veces
+        // una funciona donde la otra está bloqueada).
         val arp = readArpTable()
+        val neigh = if (arp.isEmpty()) readIpNeigh() else emptyMap()
         for (d in found) {
-            arp[d.ip]?.let { mac ->
+            (arp[d.ip] ?: neigh[d.ip])?.let { mac ->
                 d.mac = mac
                 d.sources.add("ARP")
             }
         }
         found
+    }
+
+    /** Lee la tabla de vecinos con `ip neigh`. Mapa IP -> MAC. */
+    private fun readIpNeigh(): Map<String, String> {
+        val result = HashMap<String, String>()
+        try {
+            val proc = ProcessBuilder("ip", "neigh").redirectErrorStream(true).start()
+            proc.inputStream.bufferedReader().useLines { lines ->
+                for (line in lines) {
+                    // Formato: "192.168.0.5 dev wlan0 lladdr aa:bb:cc:dd:ee:ff REACHABLE"
+                    val cols = line.trim().split(Regex("\\s+"))
+                    val ip = cols.firstOrNull() ?: continue
+                    val llIdx = cols.indexOf("lladdr")
+                    if (llIdx != -1 && llIdx + 1 < cols.size) {
+                        val mac = cols[llIdx + 1]
+                        if (mac.contains(":") && mac != "00:00:00:00:00:00") {
+                            result[ip] = mac.uppercase()
+                        }
+                    }
+                }
+            }
+            proc.waitFor()
+        } catch (_: Exception) {}
+        return result
     }
 
     /** ¿La IP responde a ICMP o a algún puerto TCP común? */
