@@ -87,3 +87,6 @@ No necesitas Android Studio ni el `gradle-wrapper.jar`: el workflow instala Grad
 ## Ampliar la base de fabricantes
 
 `app/src/main/assets/oui.txt` trae una lista curada. Puedes pegarle más entradas de la base oficial de IEEE en el mismo formato `AABBCC=Nombre`.
+
+## Para desarrollar
+Ver [`CLAUDE.md`](CLAUDE.md).
